@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'nginx/**'
+      - 'scripts/render-swarm.py'
+      - 'scripts/setup-swarm-volumes.sh'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -19,6 +21,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate deployment scripts
+        run: |
+          python3 -m py_compile scripts/render-swarm.py
+          bash -n scripts/setup-swarm-volumes.sh
+
       - name: Create test TLS certificate
         run: |
           mkdir -p "$RUNNER_TEMP/certs/live/mirea.stream"
@@ -30,10 +37,7 @@ jobs:
       - name: Validate Nginx configuration
         run: |
           docker build -t mirea-nginx-check ./nginx
-          docker run --rm \
-            --add-host=web:127.0.0.1 \
-            -v "$RUNNER_TEMP/certs:/etc/letsencrypt:ro" \
-            mirea-nginx-check nginx -t
+          docker run --rm --add-host=web:127.0.0.1 -v "$RUNNER_TEMP/certs:/etc/letsencrypt:ro" mirea-nginx-check nginx -t
 
       - name: Set image name
         shell: bash
@@ -89,7 +93,7 @@ jobs:
           ssh "${OPTS[@]}" "$USERNAME@$HOST" \
             "docker service update --with-registry-auth --image '$IMAGE' --detach=false mirea_nginx"
 
-      - name: HTTPS test with a rollback
+      - name: HTTPS smoke test (roll back if failed)
         if: github.event_name == 'workflow_dispatch'
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
