@@ -57,6 +57,7 @@ jobs:
           tags: ${{ env.IMAGE }}
 
       - name: Prepare SSH identity and known hosts
+        if: github.event_name == 'workflow_dispatch'
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
@@ -70,6 +71,7 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Authenticate the VPS to GHCR and deploy to Swarm
+        if: github.event_name == 'workflow_dispatch'
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USERNAME: ${{ secrets.DEPLOY_USER }}
@@ -87,7 +89,8 @@ jobs:
           ssh "${OPTS[@]}" "$USERNAME@$HOST" \
             "docker service update --with-registry-auth --image '$IMAGE' --detach=false mirea_nginx"
 
-      - name: HTTPS smoke test (roll back if failed)
+      - name: HTTPS test with a rollback
+        if: github.event_name == 'workflow_dispatch'
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USERNAME: ${{ secrets.DEPLOY_USER }}
