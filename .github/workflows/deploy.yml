@@ -30,7 +30,10 @@ jobs:
       - name: Validate Nginx configuration
         run: |
           docker build -t mirea-nginx-check ./nginx
-          docker run --rm -v "$RUNNER_TEMP/certs:/etc/letsencrypt:ro" mirea-nginx-check nginx -t
+          docker run --rm \
+            --add-host=web:127.0.0.1 \
+            -v "$RUNNER_TEMP/certs:/etc/letsencrypt:ro" \
+            mirea-nginx-check nginx -t
 
       - name: Set image name
         shell: bash
