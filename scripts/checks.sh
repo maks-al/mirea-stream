@@ -9,4 +9,3 @@ printf '%s\n' '== Сервисы Swarm =='
 docker stack services mirea 2>/dev/null || true
 printf '%s\n' '== Контейнеры =='
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-printf '%s\n' 'Важно: веб-ответ не доказывает работоспособность JVB. Проверяйте 3+ участников из разных сетей.'
