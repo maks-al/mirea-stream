@@ -1,0 +1,103 @@
+name: CI-CD Nginx (mirea.stream)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'nginx/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test TLS certificate
+        run: |
+          mkdir -p "$RUNNER_TEMP/certs/live/mirea.stream"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$RUNNER_TEMP/certs/live/mirea.stream/privkey.pem" \
+            -out "$RUNNER_TEMP/certs/live/mirea.stream/fullchain.pem" \
+            -subj '/CN=mirea.stream' >/dev/null 2>&1
+
+      - name: Validate Nginx configuration
+        run: |
+          docker build -t mirea-nginx-check ./nginx
+          docker run --rm \
+            -v "$RUNNER_TEMP/certs:/etc/letsencrypt:ro" \
+            mirea-nginx-check nginx -t
+
+      - name: Set image name
+        shell: bash
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mirea-nginx:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish the image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./nginx
+          push: true
+          tags: ${{ env.IMAGE }}
+
+      - name: Prepare SSH identity and known hosts
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Authenticate the VPS to GHCR and deploy to Swarm
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USERNAME: ${{ secrets.DEPLOY_USER }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$HOST"
+          test -n "$USERNAME"
+          OPTS=(-i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          # GITHUB_TOKEN is transferred over encrypted SSH stdin; never echo it to log.
+          printf '%s' "$TOKEN" | ssh "${OPTS[@]}" "$USERNAME@$HOST" \
+            "docker login ghcr.io -u '$GH_USER' --password-stdin"
+          ssh "${OPTS[@]}" "$USERNAME@$HOST" \
+            "docker service update --with-registry-auth --image '$IMAGE' --detach=false mirea_nginx"
+
+      - name: HTTPS smoke test (roll back if failed)
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USERNAME: ${{ secrets.DEPLOY_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! curl --fail --silent --show-error --retry 6 --retry-delay 3 \
+            --max-time 15 --head https://mirea.stream/ > /dev/null; then
+            ssh -i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=yes \
+              "$USERNAME@$HOST" 'docker service rollback mirea_nginx'
+            echo 'HTTP test failed; rollback requested' >&2
+            exit 1
+          fi
+          echo 'HTTPS smoke test OK'

@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+upstream/
+config/
+acme/
+backups/
+generated/
+*.key
+*.pem
+*.bak
+*.tar.gz
+__pycache__/
+evidence/*.png
+evidence/*.jpg

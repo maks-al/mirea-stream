@@ -1,0 +1,30 @@
+# Compose v2.24.4+ is required for !override.
+# Use WITH the matching upstream stable-11248-2 docker-compose.yml.
+services:
+  web:
+    # Remove both upstream public HTTP/HTTPS mappings; only Nginx is public.
+    ports: !override []
+  jicofo:
+    # Do not publish the optional Jicofo REST endpoint even to localhost.
+    ports: !override []
+  jvb:
+    # Do not publish the internal Colibri REST endpoint.
+    ports: !override
+      - target: 10000
+        published: 10000
+        protocol: udp
+  nginx:
+    image: ${NGINX_IMAGE:-mirea-stream-nginx:local}
+    build:
+      context: ${PROJECT_ROOT:-/opt/mirea-stream}/nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ${PROJECT_ROOT:-/opt/mirea-stream}/acme:/var/www/acme:ro
+    networks:
+      - meet.jitsi
+    depends_on:
+      - web
