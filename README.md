@@ -1,5 +1,5 @@
 # mirea-stream
-Онлайн платформа видеоконференцсвязи на Jitsi Meet версии `stable-11248-2`.
+Онлайн платформа видеоконференцсвязи, основанная на Jitsi Meet версии `stable-11248-2`.
 Разворачиваются контейнеры `web`, `prosody`, `jicofo`, `jvb`, `nginx`, применены Docker Compose, одноузловой Docker Swarm и GitHub Actions CI/CD.
 
 Нужно получить исходный пакет Jitsi непосредственно с официального GitHub и сохранить его в `upstream/`.
