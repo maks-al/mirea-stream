@@ -45,19 +45,11 @@ packages() {
         say 'Deployment prerequisites already present'
         return
     fi
+    # The plain Ubuntu 24.04 packages are the ones verified on the actual VPS.
+    # No full-upgrade, extra Docker repository, or hidden APT output.
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq ca-certificates curl gnupg git openssl certbot python3 python3-yaml iproute2
-    if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
-        install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-        chmod a+r /etc/apt/keyrings/docker.asc
-        printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "${UBUNTU_CODENAME:-noble}" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.sources
-        apt-get update -qq
-        apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    fi
-    systemctl enable --now docker
-    systemctl enable --now certbot.timer
+    apt update -y && apt install -y ca-certificates curl gnupg git openssl certbot python3 python3-yaml iproute2 docker.io docker-compose-v2 openssh-client openssh-server tar gzip
+    systemctl enable --now docker certbot.timer
     docker info >/dev/null
     say "Docker: $(docker --version); Compose: $(docker compose version --short)"
 }
@@ -85,10 +77,18 @@ env_value() {
     printf '%s' "${value#*=}"
 }
 
+# Public HTTP-01 files must be readable by the unprivileged Nginx worker.
+# The deployment-wide umask is 077 for secrets, so explicitly set directory modes.
+# Do NOT chmod the whole project, config/, .env or /etc/letsencrypt.
+prepare_acme_webroot() {
+    install -d -m 755 "$ROOT/acme" "$ROOT/acme/.well-known" "$ROOT/acme/.well-known/acme-challenge"
+}
+
 sources() {
     require_root
     ensure_repo
-    mkdir -p "$ROOT/upstream" "$ROOT/config" "$ROOT/generated" "$ROOT/acme/.well-known/acme-challenge"
+    mkdir -p "$ROOT/upstream" "$ROOT/config" "$ROOT/generated"
+    prepare_acme_webroot
     chmod 700 "$ROOT/generated"
     if [[ ! -f "$ROOT/upstream/docker-compose.yml" || ! -f "$ROOT/upstream/env.example" ]]; then
         say "Downloading pinned Jitsi Docker sources $JITSI_TAG"
@@ -226,13 +226,26 @@ check() {
     curl -4fsSI --max-time 15 "https://$DOMAIN/images/welcome-background.png" >/dev/null || fail 'Missing welcome-page picture override.'
     curl -4fsSI --max-time 15 "https://$DOMAIN/brand/branding.json" >/dev/null || fail 'Missing brand JSON.'
     curl -4fsS --max-time 15 "https://$DOMAIN/interface_config.js" | grep -F 'MIREA Stream' >/dev/null || fail 'Interface branding is not active.'
-    curl -4fsS --max-time 15 "https://$DOMAIN/config.js" | grep -F 'brandingDataUrl' >/dev/null || fail 'Jitsi branding JSON URL is missing.'
+    curl -4fsS --max-time 15 "https://$DOMAIN/config.js" | grep -F 'config.dynamicBrandingUrl' >/dev/null || fail 'Jitsi branding JSON URL is missing.'
     say 'PASS: 5/5 Swarm tasks, HTTPS, Jitsi config, branded assets'
     say 'Real audio/video and moderator behavior require a browser conference test.'
 }
 
 finalize_tls() {
     require_root
+    prepare_acme_webroot
+    # Verify the actual HTTP-01 route before changing Certbot's renewal mode.
+    # 0644 is essential here because the deployment runs with umask 077.
+    local probe="$ROOT/acme/.well-known/acme-challenge/mirea-probe-$$" response
+    printf 'mirea-acme-ok\n' > "$probe"
+    chmod 644 "$probe"
+    if ! response="$(curl -4fsS --connect-timeout 5 --max-time 15 "http://$DOMAIN/.well-known/acme-challenge/${probe##*/}")"; then
+        rm -f "$probe"
+        fail 'ACME webroot is not reachable over HTTP; check Nginx and file permissions.'
+    fi
+    rm -f "$probe"
+    [[ "$response" == mirea-acme-ok ]] || fail 'ACME webroot returned unexpected content.'
+    say 'ACME HTTP-01 route verified'
     install -D -m 755 "$ROOT/scripts/renew-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/mirea-nginx-reload.sh
     systemctl enable --now certbot.timer
     if ! grep -Eq '^authenticator *= *webroot' "/etc/letsencrypt/renewal/$DOMAIN.conf"; then
