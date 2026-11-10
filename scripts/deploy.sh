@@ -190,6 +190,14 @@ swarm_deploy() {
     bash "$ROOT/scripts/setup-swarm-volumes.sh"
     render
     build_local_nginx
+    # On the single-node Swarm, pre-pull the exact immutable release tag.
+    # A registry/auth/network failure must stop the deploy before touching
+    # the currently running service. This also primes the worker image cache.
+    local desired_image="$(env_value NGINX_IMAGE)"
+    if [[ "$desired_image" != mirea-stream-nginx:local ]]; then
+        say "Pulling release image on the Swarm node: $desired_image"
+        docker pull "$desired_image" || fail 'Cannot pull release image on VPS; inspect GHCR permissions and Docker network.'
+    fi
     if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}')" == inactive ]]; then
         local ip="$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1)"
         [[ -n "$ip" ]] || fail 'Cannot determine manager address.'
@@ -209,6 +217,45 @@ swarm_deploy() {
         if [[ "$(env_value NGINX_IMAGE)" == mirea-stream-nginx:local ]]; then docker service update --force "${STACK}_nginx"; fi
         if [[ "$(cat "$ROOT/generated/branding-changed")" == 1 ]]; then docker service update --force "${STACK}_web"; fi
     fi
+    verify_nginx_release
+}
+
+verify_nginx_release() {
+    require_root
+    local expected_image="$(env_value NGINX_IMAGE)" state desired_image active_image replicas
+    local expected_header actual_header i
+    # Manual Compose/Swarm walkthroughs use a local image, not a GHCR release.
+    [[ "$expected_image" == mirea-stream-nginx:local ]] && return 0
+    expected_header="$(sed -nE 's/^[[:space:]]*add_header[[:space:]]+X-Mirea-Release[[:space:]]+"([^"]+)"[[:space:]]+always;.*/\1/p' "$ROOT/nginx/default.conf" | head -n 1)"
+    [[ -n "$expected_header" ]] || fail 'No X-Mirea-Release value in source Nginx config.'
+    say "Waiting for Swarm to activate image $expected_image (release $expected_header)"
+    # Do not accept 1/1 alone. The *old* service may still be serving requests
+    # while the new task is rejected and Swarm performs an automatic rollback.
+    for i in $(seq 1 60); do
+        state="$(docker service inspect "${STACK}_nginx" --format '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{end}}' 2>/dev/null || true)"
+        case "$state" in
+            rollback*|paused)
+                docker service ps "${STACK}_nginx" --no-trunc || true
+                fail "Nginx Swarm update did not converge (state: $state)."
+                ;;
+        esac
+        desired_image="$(docker service inspect "${STACK}_nginx" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null || true)"
+        active_image="$(docker ps --filter status=running --filter "label=com.docker.swarm.service.name=${STACK}_nginx" --format '{{.Image}}' 2>/dev/null | head -n 1)"
+        replicas="$(docker service ls --filter "name=${STACK}_nginx" --format '{{.Replicas}}' 2>/dev/null | head -n 1)"
+        if [[ ( "$desired_image" == "$expected_image" || "$desired_image" == "$expected_image@sha256:"* ) &&
+              ( "$active_image" == "$expected_image" || "$active_image" == "$expected_image@sha256:"* ) &&
+              "$replicas" == 1/1 && ( "$state" == completed || -z "$state" ) ]]; then
+            actual_header="$(curl -4fsSI --connect-timeout 3 --max-time 8 "https://$DOMAIN/" 2>/dev/null | tr -d '\r' | sed -nE 's/^[Xx]-[Mm]irea-[Rr]elease:[[:space:]]*(.*)$/\1/p' | head -n 1 || true)"
+            if [[ "$actual_header" == "$expected_header" ]]; then
+                say "Release verified: image $expected_image; HTTP header $actual_header"
+                return 0
+            fi
+        fi
+        sleep 3
+    done
+    docker service inspect "${STACK}_nginx" --format '{{json .UpdateStatus}}' || true
+    docker service ps "${STACK}_nginx" --no-trunc || true
+    fail "Nginx release not activated: expected image $expected_image and HTTP header $expected_header."
 }
 
 check() {
