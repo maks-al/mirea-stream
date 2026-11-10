@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="MIREA Stream">
+  <defs><linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#70f2ff"/><stop offset="1" stop-color="#4990e6"/></linearGradient></defs>
+  <rect width="96" height="96" rx="21" fill="#09285d"/>
+  <circle cx="48" cy="48" r="32" fill="none" stroke="url(#a)" stroke-width="5" stroke-dasharray="168 39" transform="rotate(-42 48 48)"/>
+  <path d="M23 59L40 37L51 49L72 24" fill="none" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="72" cy="24" r="5" fill="#70f2ff"/>
+</svg>

@@ -1,0 +1,10 @@
+# Build context includes only the reverse proxy and public brand assets.
+# No Jitsi configuration, credentials, certs or logs reach Docker build.
+**
+!nginx/
+!nginx/Dockerfile
+!nginx/default.conf
+!branding/
+!branding/branding.json
+!branding/assets/
+!branding/assets/**

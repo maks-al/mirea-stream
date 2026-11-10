@@ -1,111 +1,125 @@
-name: CI-CD Nginx (mirea.stream)
+name: MIREA Stream CI/CD
 
 on:
   push:
     branches: [main]
     paths:
+      - 'branding/**'
+      - '.dockerignore'
       - 'nginx/**'
-      - 'scripts/render-swarm.py'
-      - 'scripts/setup-swarm-volumes.sh'
+      - 'docker-compose.override.yml'
+      - 'scripts/**'
+      - 'tests/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'auto = install if clean, otherwise update'
+        required: true
+        default: auto
+        type: choice
+        options: [auto, install, update]
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Validate and publish
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Validate deployment scripts
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate scripts, configuration and image assets
         run: |
+          python3 -m pip install --quiet PyYAML
+          for script in scripts/*.sh; do bash -n "$script"; done
           python3 -m py_compile scripts/render-swarm.py
-          bash -n scripts/setup-swarm-volumes.sh
-
-      - name: Create test TLS certificate
+          python3 -m unittest discover -s tests -v
+          node --check branding/custom-config.js
+          node --check branding/custom-interface_config.js
+          python3 -m json.tool branding/branding.json > /dev/null
+      - name: Create ephemeral TLS certificate for Nginx test
         run: |
           mkdir -p "$RUNNER_TEMP/certs/live/mirea.stream"
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -keyout "$RUNNER_TEMP/certs/live/mirea.stream/privkey.pem" \
-            -out "$RUNNER_TEMP/certs/live/mirea.stream/fullchain.pem" \
-            -subj '/CN=mirea.stream' >/dev/null 2>&1
-
-      - name: Validate Nginx configuration
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$RUNNER_TEMP/certs/live/mirea.stream/privkey.pem" -out "$RUNNER_TEMP/certs/live/mirea.stream/fullchain.pem" -subj '/CN=mirea.stream' > /dev/null 2>&1
+      - name: Build and validate Nginx
         run: |
-          docker build -t mirea-nginx-check ./nginx
-          docker run --rm --add-host=web:127.0.0.1 -v "$RUNNER_TEMP/certs:/etc/letsencrypt:ro" mirea-nginx-check nginx -t
-
-      - name: Set image name
-        shell: bash
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mirea-nginx:${GITHUB_SHA}" >> "$GITHUB_ENV"
-
-      - name: Authenticate to GHCR
+          docker build -f nginx/Dockerfile -t mirea-nginx-check .
+          docker run --rm -v "$RUNNER_TEMP/certs:/etc/letsencrypt:ro" mirea-nginx-check nginx -t
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and publish the image
+      - uses: docker/setup-buildx-action@v3
+      - name: Publish versioned image
         uses: docker/build-push-action@v6
         with:
-          context: ./nginx
+          context: .
+          file: nginx/Dockerfile
           push: true
-          tags: ${{ env.IMAGE }}
+          tags: ghcr.io/${{ github.repository_owner }}/mirea-nginx:${{ github.sha }}
 
-      - name: Prepare SSH identity and known hosts
-        if: github.event_name == 'workflow_dispatch'
+  deploy:
+    name: Install or update VPS
+    needs: build
+    runs-on: ubuntu-latest
+    # Enable Settings > Secrets and variables > Actions > Variables > DEPLOY_ENABLED=true
+    # only AFTER the final manual walkthrough. Manual dispatch always attempts CD.
+    if: github.event_name == 'workflow_dispatch' || vars.DEPLOY_ENABLED == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure strict SSH authentication
         env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
-          test -n "$SSH_KEY"
-          test -n "$KNOWN_HOSTS"
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Authenticate the VPS to GHCR and deploy to Swarm
-        if: github.event_name == 'workflow_dispatch'
+          test -n "$HOST" && test -n "$USER" && test -n "$KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+      - name: Install Docker prerequisites on VPS (if needed)
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
-          USERNAME: ${{ secrets.DEPLOY_USER }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$HOME/.ssh/id_ed25519" "$USER@$HOST" 'bash -s -- packages' < scripts/deploy.sh
+      - name: Authenticate VPS to GHCR
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
           GH_USER: ${{ github.actor }}
-        shell: bash
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          test -n "$HOST"
-          test -n "$USERNAME"
-          OPTS=(-i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=yes)
-          # GITHUB_TOKEN is transferred over encrypted SSH stdin; never echo it to log.
-          printf '%s' "$TOKEN" | ssh "${OPTS[@]}" "$USERNAME@$HOST" \
-            "docker login ghcr.io -u '$GH_USER' --password-stdin"
-          ssh "${OPTS[@]}" "$USERNAME@$HOST" \
-            "docker service update --with-registry-auth --image '$IMAGE' --detach=false mirea_nginx"
-
-      - name: HTTPS smoke test (roll back if failed)
-        if: github.event_name == 'workflow_dispatch'
+          printf '%s' "$TOKEN" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$HOME/.ssh/id_ed25519" "$USER@$HOST" "docker login ghcr.io -u '$GH_USER' --password-stdin"
+      - name: Run unified installer/updater on VPS
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
-          USERNAME: ${{ secrets.DEPLOY_USER }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          SHA: ${{ github.sha }}
+          OWNER: ${{ github.repository_owner }}
+          EVENT: ${{ github.event_name }}
+          REQUESTED_MODE: ${{ inputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
-          if ! curl --fail --silent --show-error --retry 6 --retry-delay 3 \
-            --max-time 15 --head https://mirea.stream/ > /dev/null; then
-            ssh -i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=yes \
-              "$USERNAME@$HOST" 'docker service rollback mirea_nginx'
-            echo 'HTTP test failed; rollback requested' >&2
+          mode=auto
+          if [[ "$EVENT" == workflow_dispatch && -n "$REQUESTED_MODE" ]]; then mode="$REQUESTED_MODE"; fi
+          image="ghcr.io/${OWNER,,}/mirea-nginx:${SHA}"
+          if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$HOME/.ssh/id_ed25519" "$USER@$HOST" "env REF='$SHA' NGINX_IMAGE='$image' bash -s -- '$mode'" < scripts/deploy.sh; then
+            echo 'Deployment failed. Trying Nginx Swarm rollback when available.' >&2
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$HOME/.ssh/id_ed25519" "$USER@$HOST" 'docker service rollback mirea_nginx || true'
             exit 1
           fi
-          echo 'HTTPS smoke test OK'
+      - name: External HTTPS smoke test
+        run: |
+          curl -4fsSI --retry 6 --retry-delay 3 --max-time 15 https://mirea.stream/
+          curl -4fsSI --retry 6 --retry-delay 3 --max-time 15 https://mirea.stream/brand/logo.svg

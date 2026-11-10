@@ -16,7 +16,8 @@ services:
   nginx:
     image: ${NGINX_IMAGE:-mirea-stream-nginx:local}
     build:
-      context: ${PROJECT_ROOT:-/opt/mirea-stream}/nginx
+      context: ${PROJECT_ROOT:-/opt/mirea-stream}
+      dockerfile: nginx/Dockerfile
     restart: unless-stopped
     ports:
       - "80:80"
