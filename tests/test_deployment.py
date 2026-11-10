@@ -61,11 +61,24 @@ class SwarmTests(unittest.TestCase):
 
     def test_branding_and_paths(self):
         b = json.loads((ROOT / 'branding/branding.json').read_text())
-        self.assertEqual(b['logoImageUrl'], 'https://mirea.stream/brand/logo.svg')
+        self.assertEqual(b['logoImageUrl'], 'https://mirea.stream/brand/logo-header.png')
         self.assertTrue((ROOT / 'branding/assets/background.webp').is_file())
         self.assertTrue((ROOT / 'branding/assets/welcome-background.png').is_file())
         self.assertIn('images/welcome-background.png', (ROOT / 'nginx/default.conf').read_text())
-        self.assertIn('config.brandingDataUrl', (ROOT / 'branding/custom-config.js').read_text())
+        self.assertIn('config.dynamicBrandingUrl', (ROOT / 'branding/custom-config.js').read_text())
+        # Jitsi's welcome heading is translated, not read from APP_NAME.
+        self.assertFalse(b['defaultBranding'])
+        for lang in ('ru', 'en'):
+            translation = json.loads((ROOT / f'branding/assets/labels-{lang}.json').read_text())
+            self.assertEqual(translation['welcomepage']['headerTitle'], 'MIREA Stream')
+            self.assertEqual(b['labels'][lang], f'https://mirea.stream/brand/labels-{lang}.json')
+        for filename in ('logo-header.png', 'logo-color.png', 'logo.svg', 'mark.png', 'mark.svg', 'favicon.ico'):
+            self.assertTrue((ROOT / 'branding/assets' / filename).is_file(), filename)
+        self.assertTrue((ROOT / 'branding/assets/logo-header.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'))
+        self.assertIn('/brand/logo-header.png', (ROOT / 'branding/custom-interface_config.js').read_text())
+        self.assertIn('logo-header.png', (ROOT / 'branding/custom-config.js').read_text())
+        self.assertIn('width: 250px', (ROOT / 'branding/assets/welcome.css').read_text())
+        self.assertIn('/brand/welcome.css', (ROOT / 'branding/custom-interface_config.js').read_text())
         d = yaml.safe_load((ROOT / '.github/workflows/deploy.yml').read_text())
         self.assertIn('build', d['jobs'])
         self.assertIn('deploy', d['jobs'])

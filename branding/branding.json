@@ -1,7 +1,12 @@
 {
+  "defaultBranding": false,
   "backgroundColor": "#09265a",
   "backgroundImageUrl": "https://mirea.stream/brand/background.webp",
   "premeetingBackground": "url(https://mirea.stream/brand/background.webp)",
   "logoClickUrl": "https://mirea.stream/",
-  "logoImageUrl": "https://mirea.stream/brand/logo.svg"
+  "logoImageUrl": "https://mirea.stream/brand/logo-header.png",
+  "labels": {
+    "ru": "https://mirea.stream/brand/labels-ru.json",
+    "en": "https://mirea.stream/brand/labels-en.json"
+  }
 }

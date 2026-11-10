@@ -1,0 +1,22 @@
+/* Pinned Jitsi stable-11248-2 home-page only: larger welcome watermark.
+   The original Jitsi layout, form, typography and conference UI remain intact.
+   This file is served from our Nginx image; no upstream files are modified. */
+.welcome .header .header-watermark-container .welcome-watermark .watermark.leftwatermark {
+    width: 250px !important;
+    height: 50px !important;
+    max-width: none !important;
+    max-height: none !important;
+    background-size: contain !important;
+    background-repeat: no-repeat !important;
+    background-position: left center !important;
+}
+/* The real logo is drawn by the inner DIV. Do not draw a duplicate on its link. */
+.welcome .header .header-watermark-container .welcome-watermark div.watermark.leftwatermark {
+    background-image: url('/brand/logo-header.png') !important;
+}
+@media (max-width: 600px) {
+    .welcome .header .header-watermark-container .welcome-watermark .watermark.leftwatermark {
+        width: 180px !important;
+        height: 36px !important;
+    }
+}
