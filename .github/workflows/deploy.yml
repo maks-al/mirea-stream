@@ -11,6 +11,7 @@ on:
       - 'scripts/**'
       - 'tests/**'
       - '.github/workflows/deploy.yml'
+      - 'README.md'
   workflow_dispatch:
     inputs:
       mode:
