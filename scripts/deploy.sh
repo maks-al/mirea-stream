@@ -222,14 +222,30 @@ check() {
     docker node ls
     docker stack services "$STACK"
     if (( ! found )); then docker stack ps "$STACK" --no-trunc; fail 'Not all five services reached 1/1.'; fi
+    # A running Swarm task (1/1) does not mean Jitsi's web server is ready.
+    # During deploys, Nginx may briefly return 502 for the proxied JS routes.
+    local http_ready=0 interface_js config_js
+    say 'Waiting for Jitsi HTTP readiness'
+    for i in $(seq 1 45); do
+        if interface_js="$(curl -4fsS --connect-timeout 3 --max-time 8 "https://$DOMAIN/interface_config.js" 2>/dev/null)" &&
+           [[ "$interface_js" == *"MIREA Stream"* ]] &&
+           config_js="$(curl -4fsS --connect-timeout 3 --max-time 8 "https://$DOMAIN/config.js" 2>/dev/null)" &&
+           [[ "$config_js" == *"config.dynamicBrandingUrl"* ]]; then
+            http_ready=1
+            break
+        fi
+        sleep 3
+    done
+    if (( ! http_ready )); then
+        docker service ps "${STACK}_web" --no-trunc || true
+        fail 'Jitsi HTTP readiness failed: interface/config JS unavailable or branding is missing.'
+    fi
     curl -4fsSI --retry 8 --retry-delay 2 --max-time 15 "https://$DOMAIN/" >/dev/null || fail 'HTTPS smoke test failed.'
     curl -4fsSI --max-time 15 "https://$DOMAIN/config.js" >/dev/null || fail 'Missing Jitsi config.js.'
     curl -4fsSI --max-time 15 "https://$DOMAIN/brand/logo.svg" >/dev/null || fail 'Missing branded logo.'
     curl -4fsSI --max-time 15 "https://$DOMAIN/brand/background.webp" >/dev/null || fail 'Missing branded background.'
     curl -4fsSI --max-time 15 "https://$DOMAIN/images/welcome-background.png" >/dev/null || fail 'Missing welcome-page picture override.'
     curl -4fsSI --max-time 15 "https://$DOMAIN/brand/branding.json" >/dev/null || fail 'Missing brand JSON.'
-    curl -4fsS --max-time 15 "https://$DOMAIN/interface_config.js" | grep -F 'MIREA Stream' >/dev/null || fail 'Interface branding is not active.'
-    curl -4fsS --max-time 15 "https://$DOMAIN/config.js" | grep -F 'config.dynamicBrandingUrl' >/dev/null || fail 'Jitsi branding JSON URL is missing.'
     say 'PASS: 5/5 Swarm tasks, HTTPS, Jitsi config, branded assets'
     say 'Real audio/video and moderator behavior require a browser conference test.'
 }
