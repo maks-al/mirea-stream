@@ -117,8 +117,11 @@ jobs:
           if [[ "$EVENT" == workflow_dispatch && -n "$REQUESTED_MODE" ]]; then mode="$REQUESTED_MODE"; fi
           image="ghcr.io/${OWNER,,}/mirea-nginx:${SHA}"
           if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$HOME/.ssh/id_ed25519" "$USER@$HOST" "env REF='$SHA' NGINX_IMAGE='$image' bash -s -- '$mode'" < scripts/deploy.sh; then
-            echo 'Deployment failed. Trying Nginx Swarm rollback when available.' >&2
-            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$HOME/.ssh/id_ed25519" "$USER@$HOST" 'docker service rollback mirea_nginx || true'
+            echo 'Deployment failed.' >&2
+            # There is no previous service spec on an initial install.
+            if [[ "$mode" != install ]]; then
+              ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i "$HOME/.ssh/id_ed25519" "$USER@$HOST" 'if docker service inspect mirea_nginx --format "{{with .PreviousSpec}}{{.Name}}{{end}}" 2>/dev/null | grep -q .; then docker service rollback mirea_nginx || true; fi' || true
+            fi
             exit 1
           fi
       - name: External HTTPS smoke test

@@ -126,7 +126,10 @@ sources() {
     image="${NGINX_IMAGE:-mirea-stream-nginx:local}"
     [[ "$image" =~ ^[a-zA-Z0-9./_:@-]+$ ]] || fail 'Invalid Nginx image name.'
     set_env NGINX_IMAGE "$image"
-    mkdir -p "$ROOT/config/web" "$ROOT/config/storage/web" "$ROOT/config/storage/transcripts" "$ROOT/config/prosody/config" "$ROOT/config/prosody/prosody-plugins-custom" "$ROOT/config/storage/prosody" "$ROOT/config/jicofo" "$ROOT/config/jvb" "$ROOT/config/tmp/web-load-test"
+    # All bind sources in pinned Jitsi Compose must exist BEFORE Swarm creates tasks.
+    # Compose implicitly creates missing directories, whereas Swarm rejects the task.
+    mkdir -p "$ROOT/config/web" "$ROOT/config/storage/web" "$ROOT/config/storage/transcripts" "$ROOT/config/prosody/config" "$ROOT/config/prosody/prosody-plugins-custom" "$ROOT/config/storage/prosody" "$ROOT/config/jicofo" "$ROOT/config/jvb" "$ROOT/config/tmp/web-load-test" \
+        "$ROOT/config/web/custom-ca" "$ROOT/config/prosody/custom-ca" "$ROOT/config/jicofo/custom-ca" "$ROOT/config/jvb/custom-ca"
     # Keep all Jitsi file mounts writable by the official rootless uid 1000.
     chown -R 1000:1000 "$ROOT/config"
     local changed=0
