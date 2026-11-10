@@ -1,10 +1,10 @@
-# Чистовое ручное развёртывание для курсового отчёта
+# Чистовое ручное развёртывание
 
-**Условия:** новый Ubuntu **24.04 LTS**, доступ root, домен `mirea.stream` уже указывает на VPS. В качестве примера указан прежний IPv4 `213.232.204.246`; **перед началом сверить адрес после переустановки VPS**. Все команды ниже вводятся по **одной физической строке**. Скриншоты делаются только после успешного результата очередного этапа. Не отправлять приватные ключи или `.env` в отчёт.
+**Условия:** чистый VPS на Ubuntu, доступ root, домен `mirea.stream` уже указывает на этот VPS. В качестве примера указан прежний IPv4 `213.232.204.246`. **перед началом сверить адрес после переустановки VPS**. Все команды ниже вводятся по **одной физической строке**.
 
-**Важно:** ручной сценарий выполняет те же действия, что `scripts/deploy.sh install`, но отдельными командами — чтобы показать использование Docker, Compose, Swarm, HTTPS и сетей. Для автоматического запуска используйте отдельное руководство CD.
+**Важно:** ручной сценарий выполняет те же действия, что `scripts/deploy.sh install`, но отдельными командами - чтобы показать использование Docker, Compose, Swarm, HTTPS и сетей. Для автоматического запуска есть отдельное руководство CD.
 
-## Этап 1 — Docker и зависимости
+## Этап 1 - Docker и зависимости
 
 ```bash
 apt-get update && apt-get install -y ca-certificates curl gnupg git openssl certbot python3 python3-yaml iproute2
@@ -34,9 +34,7 @@ systemctl enable --now docker certbot.timer
 docker --version && docker compose version
 ```
 
-**Снимок 1:** версия Docker и Compose.
-
-## Этап 2 — исходный код, Jitsi и конфигурации
+## Этап 2 - исходный код, Jitsi и конфигурации
 
 ```bash
 git clone https://github.com/maks-al/mirea-stream.git /opt/mirea-stream
@@ -78,9 +76,7 @@ chown -R 1000:1000 /opt/mirea-stream/config
 install -m 644 -o 1000 -g 1000 /opt/mirea-stream/branding/custom-config.js /opt/mirea-stream/config/web/custom-config.js && install -m 644 -o 1000 -g 1000 /opt/mirea-stream/branding/custom-interface_config.js /opt/mirea-stream/config/web/custom-interface_config.js
 ```
 
-**Снимок 2:** дерево файлов проекта (не показывать пароли). Если публичный IPv4 сервера отличается от адреса источника маршрута, установи в `.env` реальный внешний адрес для `JVB_ADVERTISE_IPS` до запуска.
-
-## Этап 3 — первый сертификат HTTPS
+## Этап 3 - первый сертификат HTTPS
 
 Сейчас порты 80/443 должны быть свободны. При наличии почты можно добавить `--email АДРЕС` вместо `--register-unsafely-without-email`.
 
@@ -92,9 +88,7 @@ certbot certonly --standalone --preferred-challenges http --agree-tos --non-inte
 certbot certificates
 ```
 
-**Снимок 3:** сертификат Let's Encrypt для домена.
-
-## Этап 4 — временное ручное развёртывание Compose
+## Этап 4 - временное ручное развёртывание Compose
 
 ```bash
 docker compose --project-directory /opt/mirea-stream --env-file /opt/mirea-stream/.env -f /opt/mirea-stream/upstream/docker-compose.yml -f /opt/mirea-stream/docker-compose.override.yml config -q
@@ -112,9 +106,7 @@ docker compose --project-directory /opt/mirea-stream --env-file /opt/mirea-strea
 curl -4fsSI https://mirea.stream/ && curl -4fsSI https://mirea.stream/brand/logo.svg && curl -4fsSI https://mirea.stream/brand/background.webp && curl -4fsSI https://mirea.stream/images/welcome-background.png
 ```
 
-**Снимок 4:** пять контейнеров Compose. **Снимок 5:** главная страница с новой темой, браузер и HTTPS. Проверка модератора — первый участник комнаты становится модератором без логина. Реальное аудио/видео проверяется вручную в конференции с тремя устройствами (документировать результат текстом после проверки).
-
-## Этап 5 — перенос в Swarm
+## Этап 5 - перенос в Swarm
 
 ```bash
 docker compose --project-directory /opt/mirea-stream --env-file /opt/mirea-stream/.env -f /opt/mirea-stream/upstream/docker-compose.yml -f /opt/mirea-stream/docker-compose.override.yml down
@@ -152,9 +144,7 @@ docker node ls && docker stack services mirea && docker stack ps mirea
 curl -4fsSI https://mirea.stream/ && curl -4fsSI https://mirea.stream/config.js
 ```
 
-**Снимок 6:** один узел `Leader / Ready`. **Снимок 7:** пять Swarm-сервисов с репликами `1/1`. Не фотографировать старые ошибки запуска.
-
-## Этап 6 — автоматическое продление HTTPS и резервирование
+## Этап 6 - автоматическое продление HTTPS и резервирование
 
 ```bash
 printf 'mirea-acme-ok\n' > /opt/mirea-stream/acme/.well-known/acme-challenge/test.txt && curl -4fsS http://mirea.stream/.well-known/acme-challenge/test.txt
@@ -180,9 +170,7 @@ systemctl enable --now certbot.timer && certbot renew --cert-name mirea.stream -
 bash /opt/mirea-stream/scripts/backup.sh && ls -lh /root/mirea-stream-backups/
 ```
 
-**Снимок 8:** успешное тестовое продление сертификата. **Снимок 9:** резервная копия и её размер.
-
-## Этап 7 — ручная проверка и снятие итоговых показателей
+## Этап 7 - ручная проверка и снятие итоговых показателей
 
 ```bash
 bash /opt/mirea-stream/scripts/deploy.sh check
@@ -195,9 +183,3 @@ docker stats --no-stream
 ```bash
 curl -6fsSI https://mirea.stream/ && curl -4fsSI https://mirea.stream/brand/branding.json
 ```
-
-**Снимок 10:** итоговое состояние сервисов и проверка внешних ресурсов темы. Скриншоты CI/CD делаются отдельно по руководству CD.
-
-## Следующая демонстрация
-
-После фиксации ручного сценария можно провести **вторую чистую переустановку Ubuntu** и выполнить полную установку из GitHub Actions (`workflow_dispatch`, режим `install`). Перед ней заново настроить SSH-доступ и обновить отпечаток SSH-хоста в секретах GitHub, так как после переустановки ОС он изменится. Затем показать обновление (`update`) через обычный commit/push. Не стирать VPS без сохранения нужных доказательств.
