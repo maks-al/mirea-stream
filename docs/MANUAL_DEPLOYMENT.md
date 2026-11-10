@@ -1,29 +1,11 @@
-# Чистовое ручное развёртывание
+# Чистовое ручное развёртывание для курсового отчёта
 
-**Условия:** чистый VPS на Ubuntu, доступ root, домен `mirea.stream` уже указывает на этот VPS. В качестве примера указан прежний IPv4 `213.232.204.246`. **перед началом сверить адрес после переустановки VPS**. Все команды ниже вводятся по **одной физической строке**.
-
-**Важно:** ручной сценарий выполняет те же действия, что `scripts/deploy.sh install`, но отдельными командами - чтобы показать использование Docker, Compose, Swarm, HTTPS и сетей. Для автоматического запуска есть отдельное руководство CD.
+**Условия:** новый сервер на Ubuntu (**24.04 LTS** проверена), доступ root, домен `mirea.stream` привязан к IP сервера (домен можно заменить в конфигах). В качестве примера указан IPv4 `213.232.204.246` моего сервера. Все команды ниже вводятся в строгом порядке последовательно. Ручной сценарий выполняет те же действия, что `scripts/deploy.sh install`, но отдельными командами с целью показать последовательность действий, использование Docker, Compose, Swarm, HTTPS и т.д. Для автоматического запуска использовать отдельное руководство CD.
 
 ## Этап 1 - Docker и зависимости
 
 ```bash
-apt-get update && apt-get install -y ca-certificates curl gnupg git openssl certbot python3 python3-yaml iproute2
-```
-
-```bash
-install -m 0755 -d /etc/apt/keyrings
-```
-
-```bash
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && chmod a+r /etc/apt/keyrings/docker.asc
-```
-
-```bash
-printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: noble\nComponents: stable\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/docker.asc\n' > /etc/apt/sources.list.d/docker.sources
-```
-
-```bash
-apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt update -y && apt install -y ca-certificates curl gnupg git openssl certbot python3 python3-yaml iproute2 docker.io docker-compose-v2 openssh-client openssh-server tar gzip
 ```
 
 ```bash
@@ -31,7 +13,7 @@ systemctl enable --now docker certbot.timer
 ```
 
 ```bash
-docker --version && docker compose version
+docker --version && docker compose version && systemctl is-active docker
 ```
 
 ## Этап 2 - исходный код, Jitsi и конфигурации
@@ -41,7 +23,7 @@ git clone https://github.com/maks-al/mirea-stream.git /opt/mirea-stream
 ```
 
 ```bash
-mkdir -p /opt/mirea-stream/upstream /opt/mirea-stream/generated /opt/mirea-stream/acme/.well-known/acme-challenge
+mkdir -p /opt/mirea-stream/upstream /opt/mirea-stream/generated && install -d -m 755 /opt/mirea-stream/acme /opt/mirea-stream/acme/.well-known /opt/mirea-stream/acme/.well-known/acme-challenge
 ```
 
 ```bash
@@ -108,20 +90,10 @@ curl -4fsSI https://mirea.stream/ && curl -4fsSI https://mirea.stream/brand/logo
 
 ## Этап 5 - перенос в Swarm
 
-```bash
-docker compose --project-directory /opt/mirea-stream --env-file /opt/mirea-stream/.env -f /opt/mirea-stream/upstream/docker-compose.yml -f /opt/mirea-stream/docker-compose.override.yml down
-```
+Сначала подготавливаем и проверяем конфигурацию, пока Compose ещё работает. После этого создаём Swarm и лишь перед новым запуском останавливаем Compose. Для переключения нужен небольшой перерыв в доступности сайта; постоянные файлы в `config/` и сертификаты сохраняются.
 
 ```bash
-docker swarm init --advertise-addr "$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1)"
-```
-
-```bash
-bash /opt/mirea-stream/scripts/setup-swarm-volumes.sh
-```
-
-```bash
-docker compose --project-directory /opt/mirea-stream --env-file /opt/mirea-stream/.env -f /opt/mirea-stream/upstream/docker-compose.yml -f /opt/mirea-stream/docker-compose.override.yml config --format json > /opt/mirea-stream/generated/compose-resolved.json
+umask 077; docker compose --project-directory /opt/mirea-stream --env-file /opt/mirea-stream/.env -f /opt/mirea-stream/upstream/docker-compose.yml -f /opt/mirea-stream/docker-compose.override.yml config --format json > /opt/mirea-stream/generated/compose-resolved.json
 ```
 
 ```bash
@@ -133,21 +105,39 @@ docker stack config --compose-file /opt/mirea-stream/generated/stack.swarm.yml >
 ```
 
 ```bash
+bash /opt/mirea-stream/scripts/setup-swarm-volumes.sh
+```
+
+```bash
+docker swarm init --advertise-addr "$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1)"
+```
+
+```bash
+docker compose --project-directory /opt/mirea-stream --env-file /opt/mirea-stream/.env -f /opt/mirea-stream/upstream/docker-compose.yml -f /opt/mirea-stream/docker-compose.override.yml down
+```
+
+```bash
 docker stack deploy --resolve-image never --compose-file /opt/mirea-stream/generated/stack.swarm.yml mirea
 ```
 
 ```bash
-docker node ls && docker stack services mirea && docker stack ps mirea
+docker node ls
 ```
 
 ```bash
-curl -4fsSI https://mirea.stream/ && curl -4fsSI https://mirea.stream/config.js
+docker stack services mirea
+```
+
+```bash
+curl -4fsSI https://mirea.stream/ | head -n 4
 ```
 
 ## Этап 6 - автоматическое продление HTTPS и резервирование
 
+Каталоги `acme/`, `.well-known/`, `acme-challenge/` должны иметь права `755`, тестовый файл - `644`. Общий `umask 077` защищает секреты, но он же создаёт тестовый файл с правами `600`, поэтому перед запросом `curl` обязательно выставить `644`. Нельзя открывать чтение для всего `/opt/mirea-stream`, `.env` или `/etc/letsencrypt`. 
+
 ```bash
-printf 'mirea-acme-ok\n' > /opt/mirea-stream/acme/.well-known/acme-challenge/test.txt && curl -4fsS http://mirea.stream/.well-known/acme-challenge/test.txt
+printf 'mirea-acme-ok\n' > /opt/mirea-stream/acme/.well-known/acme-challenge/test.txt && chmod 644 /opt/mirea-stream/acme/.well-known/acme-challenge/test.txt && curl -4fsS http://mirea.stream/.well-known/acme-challenge/test.txt
 ```
 
 ```bash

@@ -10,8 +10,9 @@ on:
       - 'docker-compose.override.yml'
       - 'scripts/**'
       - 'tests/**'
-      - '.github/workflows/deploy.yml'
+      - 'docs/**'
       - 'README.md'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
       mode:

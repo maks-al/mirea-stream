@@ -46,6 +46,12 @@ class AcmeWebrootPermissionsTests(unittest.TestCase):
         self.assertIn('chmod 700 "$ROOT/generated"', self.deploy)
         self.assertNotIn('chmod -R 755 "$ROOT"', self.deploy)
 
+    def test_ci_runs_when_documentation_changes(self):
+        workflow_path = ROOT / '.github/workflows/deploy.yml'
+        workflow = workflow_path.read_text()
+        self.assertIn("      - 'docs/**'", workflow)
+        self.assertIn("      - 'README.md'", workflow)
+
     def test_manual_documents_proven_ubuntu_install(self):
         self.assertIn('apt update -y && apt install -y ca-certificates', self.manual)
         self.assertIn('docker.io docker-compose-v2', self.manual)
